@@ -1,0 +1,339 @@
+---
+title: "Sentiment Analysis"
+author: "Saverio Fontana"
+date: "2024-03-12"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+# LOADING PACKAGES  
+The goal of this project is to perform a Sentiment Analysis on the reviews about three different telephone companies.
+First of all we load the necessary libraries and some useful functions, pre-trained models and dictionaries.
+```{r SETUP, echo= T, results='hide'}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(RedditExtractoR)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(cld2)
+library(cld3)
+library(tm)
+library(udpipe)
+library(rtweet)
+library(ngram)
+library(wordcloud)
+library(openxlsx)
+library(stringr)
+
+#Load some useful functions
+source("utility.R", local = knitr::knit_global())
+
+#Load functions for sentiment analysis
+source("sentimentFunctions.R", local = knitr::knit_global()) 
+
+
+## Load a pre-trained model for dictionaries and the lemmatizzation in the italian language (NOTE: this model wa trained by the UD treebank for italian)
+un_model_I <- udpipe_load_model("italian-vit-ud-2.5-191206.udpipe") 
+
+#Common compound
+load("frmComposteOpSy.RData") 
+
+#Common stopwords
+load("IT_stopwwords.RData") 
+
+#Dictionaries for sentiment
+load("diz_polarity.RData") 
+
+```
+**NB that the language of the analysis is Italian**
+  
+  
+## Load data
+```{r}
+load("dfRecHoEoFw.RData")
+summary(dfRecHoEoFw)
+colnames(dfRecHoEoFw)
+```
+As we can see, for each review we are observing the name of the company reviewed, the data, the author, the mark given, the title, the comment and the text.
+
+
+# TEXTUAL CLEANING AND CORRECTION OF COMPOUND EXPRESSION
+
+```{r echo= T, results='hide'}
+#Clean text
+dfRecHoEoFw$txtp <- cleanText(xtxt = dfRecHoEoFw$testo, punctation = T) 
+
+#Visualize N-Grams
+visNGram(x = dfRecHoEoFw$txtp ,ngrI = 2,ngrF = 4,nn = 50)
+```
+  
+Now, by looking at the output, we can create an ideal correction vector containing some compound expression (that can be found in the data) to correct the dataset before the real cleaning.
+  
+```{r echo= T, results='hide'}
+vcorrez <- c("servizio clienti", NA,
+             "il call center", "call_center",
+             "call center", NA,
+             "velocità di navigazione", "velocità_navigazione",
+             "il servizio clienti", "servizio_clienti",
+             "problemi di connessione", "problemi_connessione",
+             "rapporto qualit  prezzo", NA)      
+
+dfRecHoEoFw$txtp <- corFrmComp(dfRecHoEoFw$txtp, correzioni = vcorrez) 
+
+visNGram(dfRecHoEoFw$txtp, 2, 4)
+dfRecHoEoFw$txtp <- corNGram(dfRecHoEoFw$txtp, verbose=T) 
+
+```
+  
+  
+## Lemmatization and deleting stopwords 
+We then proceed with the lemmatization (*i.e. the process of grouping together different inflected forms of the same word*) and the removal of the stopwords (*not significant words like the articles or the preopositions*)
+```{r}
+dfRecHoEoFw$doc_id <- 1:nrow(dfRecHoEoFw)
+dfRecHoEoFwL <- lemmaUDP(x = dfRecHoEoFw$txtp,
+                         model = un_model_I,
+                         doc_id = dfRecHoEoFw$doc_id,
+                         stopw = stopwIT,
+                         userstopw = c("homobile", "eolo", "fastweb"))
+```
+  
+  
+## Reconstruction of lemmatized sentences 
+The next step is the recostruction of the sentences with the lemmatized words (*NOTE the use of the left join function*)
+```{r}
+txtL <- dfRecHoEoFwL%>%
+  mutate(doc_id=as.numeric(doc_id)) %>%
+  filter(!is.na(lemma) & STOP==FALSE & upos %in% c("ADJ","NOUN","PROPN","VERB","ADV")) %>%
+  group_by(doc_id) %>%
+  summarise(txtL=paste(lemma,collapse = " "))
+
+dfRecHoEoFw <- left_join(dfRecHoEoFw, txtL, by="doc_id")
+```
+  
+  
+  
+  
+# WORDCLOUDS
+  
+To find the significant reviews we count lemmas per sentence, and then we select only those sentence with at least 5 lemmas:
+```{r}
+nlemmi <- sapply(dfRecHoEoFw$txtL, FUN=wordcount)
+#Select sentences with at least 5 lemmas 
+dfRecHoEoFw_ <- dfRecHoEoFw[nlemmi>4,]   
+```
+
+First of all, we find the 10 most common lemmas:
+```{r}
+dfRecHoEoFw_$txtL <- removeWords(tolower(dfRecHoEoFw_$txtL), words=stopwITwc)
+corpL_ <- Corpus(VectorSource(dfRecHoEoFw_$txtL))
+tdmL_ <- TermDocumentMatrix(corpL_)
+tdmL_M <- as.matrix(tdmL_)     # MATRIX terms-documents
+
+# distribution of frequences of lemmas
+dfcorpL_ <- data.frame(words=rownames(tdmL_M),        
+                       freq=rowSums(tdmL_M)) %>%      
+  arrange(-freq)
+rownames(dfcorpL_) <- NULL
+head(dfcorpL_, 10)
+```
+  
+  
+## WORDCLOUD LEMMAS weighted TF (Term Frequency)
+We proceed with a visual representation involving the Wordcloud weighted TF.  
+This involves representing the most frequently occurring lemmas in the text corpus. The size of each lemma in the word cloud is determined by its weighted term frequency, which measures how often a lemma appears in the corpus.
+```{r}
+par(mar=c(0,0,0,0))
+wordcloud(words = dfcorpL_$words,
+          freq = dfcorpL_$freq,             
+          max.words = 80,                  
+          random.order = FALSE,              
+          colors = brewer.pal(8, "Accent"))
+text(0.5,1,"Wordcloud lemmas - TF",cex=1.,font = 2)
+```
+  
+  
+## WORDCLOUD LEMMAS weighted TF-IDF --> We add the frequence of the word inside the total corpus of documents
+In this case, the size of each lemma in the word cloud is determined by its TF-IDF (*Term Frequency-Inverse Document Frequency*) score.  
+It combines term frequency (*TF*), which measures how often a term appears in a document, with inverse document frequency (*IDF*), which penalizes terms that are common across the corpus.   This results in a weighting scheme where terms that are frequent in a particular document but rare in the overall corpus are given higher importance.
+```{r}
+tdmL_IDF <- weightTfIdf(tdmL_)
+
+tdmL_IDFM <- as.matrix(tdmL_IDF)
+dfcorpL_IDF <- data.frame(words=rownames(tdmL_IDFM),
+                          tdmL_IDFM,
+                          freq=rowSums(tdmL_IDFM)) %>%
+  arrange(-freq)
+rownames(dfcorpL_IDF) <- NULL
+
+par(mar=c(0,0,0,0))
+wordcloud(words = dfcorpL_IDF$words,
+          freq = dfcorpL_IDF$freq,
+          max.words = 80,
+          scale = c(2.5,0.3),
+          random.order = F,
+          colors = brewer.pal(n = 6,name = "Accent"))
+text(0.5,1,"Wordcloud lemmas weighted - TFIDF",cex=1.5,font=2)
+
+```
+  
+  
+  
+  
+# COMPARISON OF THE COMPANIES
+The next step is the comparison of the three companies.  
+This involves a comparison cloud of the companies using the TF-IDF worldcloud method:
+```{r}
+dfRecHoEoFw.company <- dfRecHoEoFw %>% 
+  group_by(company) %>% 
+  summarise(txt=paste(txtL,collapse = " "))
+corpL.company <- Corpus(VectorSource(dfRecHoEoFw.company$txt))
+tdmL.company <- TermDocumentMatrix(corpL.company)
+
+tdmLIDF.company <- weightTfIdf(tdmL.company)
+tdmL.companyM <- as.matrix(tdmL.company)
+colnames(tdmL.companyM) <- dfRecHoEoFw.company$company
+
+par(mar=c(0,0,0,0))
+comparison.cloud(term.matrix = tdmL.companyM,
+                 scale = c(2,0.2),
+                 max.words = 80,
+                 colors = c("Blue","Black","Green"),
+                 match.colors = T,
+                 title.size = 1)
+text(0.5,1,"Comparison cloud TFIDF of the 3 companies",font=2)
+```
+  
+  
+  
+  
+# SENTIMENT
+  
+  
+## Sentiment Score
+Now we will compute the Average Sentiment Score using the sentiment dictionaries: SYUZHET, OPENR, NCR.
+```{r}
+lDizSent <- list(Syuzhet = dSyuzB, OpenR = dOpenR, NCR = dNcr)    
+
+dfRecHoEoFwLPOL <- sentiMediaDiz(x = dfRecHoEoFwL,           # output dof the lemmatization
+                                 dict = lDizSent,              # dict to use
+                                 negators = polarityShifter,
+                                 amplifiers = intensifier,
+                                 deamplifiers = weakener)
+
+dfRecHoEoFwLPOL$DizioPol
+dfRecHoEoFwLPOL$MediaPol
+
+#Add the Average Score of Sentiment to the dataframe
+dfRecHoEoFw_Sent <- left_join(dfRecHoEoFw_,                   
+                              dfRecHoEoFwLPOL$MediaPol,         
+                              by="doc_id")  
+
+#Computing class of polarity
+dfRecHoEoFw_Sent$cl_mediaPol <- ifelse(dfRecHoEoFw_Sent$mediaSent<0,             
+                                       "Negative",                                      
+                                       ifelse(dfRecHoEoFw_Sent$mediaSent>0,
+                                              "Positive",
+                                              "Neutral"))
+
+```
+  
+  
+## Average scores and graphics 
+
+```{r}
+#Total mean of sentiment score
+mean(dfRecHoEoFw_Sent$mediaSent) 
+
+#Average sentiment score grouped by company
+dfRecHoEoFw_Sent %>% group_by(company) %>%          
+  summarise(mean(mediaSent))                      
+
+
+#Distribution of the class of polarity divided per company
+dfRecHoEoFw_Sent %>% group_by(company,cl_mediaPol) %>%            
+  summarise(n=n()) %>%                                            
+  mutate(perc=n/sum(n)*100) %>%                                          
+  ggplot(aes(x=company,
+             y=perc,
+             fill=cl_mediaPol))+
+  geom_col()+
+  theme_light()+                      
+  ggtitle("Distribution of the polarity classes per company")
+
+
+```
+  
+  
+## Comparison cloud with Negative and Positive
+```{r}
+dfRecHoEoFw_polar <- dfRecHoEoFw_Sent %>% 
+  group_by(cl_mediaPol) %>% 
+  summarise(txt=paste(txtL,collapse = " "))
+corpL.polar <- Corpus(VectorSource(dfRecHoEoFw_polar$txt))
+tdmL.polar <- TermDocumentMatrix(corpL.polar)
+tdmL.polarM <- as.matrix(tdmL.polar)
+colnames(tdmL.polarM) <- dfRecHoEoFw_polar$cl_mediaPol
+
+par(mar=c(0,0,0,0))
+comparison.cloud(term.matrix = tdmL.polarM[,c(1,3)],
+                 scale = c(2,0.2),
+                 max.words = 80,
+                 colors = c("Black","green"),
+                 match.colors = T,
+                 title.size = 1)
+text(0.5,1,"Comparison cloud TF of the two polarity classes",font=2)
+```
+  
+  
+## Comparing grade and polarity classes
+
+```{r}
+#Defining grade classes
+dfRecHoEoFw_Sent$cl_voto <- cut(dfRecHoEoFw_Sent$voto,          
+                                breaks = c(1,2,3,5),              
+                                include.lowest = T)
+
+#table to compare grade classes and polarity
+tabvp <- table(dfRecHoEoFw_Sent$cl_voto, dfRecHoEoFw_Sent$cl_mediaPol)   
+addmargins(tabvp)                                                     
+sum(diag(tabvp))/sum(tabvp)    #accuracy
+```
+  
+  
+## Emotions Distributions
+```{r echo= T, results='hide'}
+dfRecHoEoFw_emo <- myClassEmotion(textColumns = dfRecHoEoFw_$txtL,
+                                  algorithm = "bayes",
+                                  lexicon = "emotions_it_lem.csv")
+dfRecHoEoFw_emo$documenti
+```
+```{r}
+dfRecHoEoFw_emo$documenti %>% group_by(best_fit) %>%
+  summarise(n=n()) %>%
+  mutate(perc=n/sum(n)*100)
+dfRecHoEoFw_emo$documenti %>% group_by(best_fit) %>% 
+  summarise(n=n()) %>% 
+  mutate(perc=n/sum(n)*100) %>% 
+  ggplot(aes(x=reorder(best_fit,perc),
+             y=perc,
+             fill=best_fit))+
+  geom_col()+
+  theme_light()+
+  scale_fill_brewer(palette = "Set1")+
+  coord_flip()+
+  labs(title = "sentiment emotions",
+       subtitle = "emotions lexicon - naiveBayes")+
+  theme(legend.position = "none")+
+  xlab(NULL)+
+  ylab("%")
+```
+  
+  
+THE END
+
+<div class="tocify-extend-page" data-unique="tocify-extend-page" style="height: 0;"></div>
