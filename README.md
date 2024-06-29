@@ -1,9 +1,12 @@
-# Utilizzo Statistico di Banche Dati Online (Sentiment Analysis)
- This is the project relative to the Course at University of Bologna, called Statistical Use of Database online.
+# Statistical Use of Online Database (Sentiment Analysis)
 
-The project was about a sentiment analysis of Customers' Reviews from 3 different telephone companies. 
-To replicate the Analysis just download all the files, then open the R files: "SentimentFunctions.R", "utility.R" launching all the functions in those files. 
+This project is part of the course at the University of Bologna, focusing on the Statistical Use of Online Databases.
 
-Then just follow the code of the R file "Reviews Compagnie.R" and it should work. (The commments help to understand what I am doing) 
-I also tried to translate the project to an R markdown but I still haven't finished (it wasnt necessary for the exam). 
+My project involves sentiment analysis of customer reviews from three different telephone companies. To replicate the analysis:
 
+1. Download all the files.
+2. Open the R files: "SentimentFunctions.R" and "utility.R", and execute all the functions defined in these files.
+3. Follow the code in the R file "Reviews Compagnie.R". Comments within the code provide guidance on its execution.
+4. Remember to set the working directory to the downloaded repository to ensure that all the dictionaries provided are being used
+
+I have also attempted to translate the project into an R markdown format, although this remains unfinished as it was not required for the exam.
